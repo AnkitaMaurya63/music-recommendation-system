@@ -18,9 +18,9 @@ Run `python evaluate.py` and fill in your numbers (also saved in `results/metric
 
 | Metric | Value |
 |---|---|
-| Unique songs | _fill_ |
-| Model precision@10 | _fill_ |
-| Random baseline precision@10 | _fill_ |
+| Unique songs | 81,343 |
+| Model precision@10 | 0.3194 |
+| Random baseline precision@10 | 0.0132 |
 
 ## How to run
 ```bash
