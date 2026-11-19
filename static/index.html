@@ -1,0 +1,171 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Music Recommender</title>
+<style>
+  :root { --bg:#0f172a; --card:#1e293b; --border:#334155; --text:#e2e8f0; --muted:#94a3b8;
+          --accent:#ec4899; --accent2:#8b5cf6; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; background:radial-gradient(circle at top,#3b0764,var(--bg) 55%);
+         color:var(--text); font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+         display:flex; justify-content:center; padding:28px 16px 48px; }
+  .wrap { width:100%; max-width:760px; }
+  h1 { margin:0 0 6px; font-size:2rem; }
+  .sub { color:var(--muted); margin:0 0 20px; }
+  .steps { display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:18px; }
+  .step { background:rgba(30,41,59,.7); border:1px solid var(--border); border-radius:12px; padding:10px 12px; font-size:.85rem; color:var(--muted); }
+  .step b { display:block; color:var(--text); margin-bottom:2px; }
+  .searchbox { position:relative; }
+  input { width:100%; padding:15px 44px 15px 16px; font:inherit; color:var(--text); background:var(--card);
+          border:1px solid var(--border); border-radius:12px; outline:none; }
+  input:focus { border-color:var(--accent); box-shadow:0 0 0 3px rgba(236,72,153,.18); }
+  #clear { position:absolute; right:10px; top:50%; transform:translateY(-50%); display:none; background:none;
+           border:0; color:var(--muted); font-size:1.2rem; cursor:pointer; }
+  .chips { display:flex; flex-wrap:wrap; gap:8px; margin:12px 0 4px; align-items:center; }
+  .chips .lbl { color:var(--muted); font-size:.85rem; }
+  .chip { cursor:pointer; border:1px solid var(--border); background:var(--card); color:var(--text);
+          padding:6px 12px; border-radius:999px; font:inherit; font-size:.85rem; }
+  .chip:hover { border-color:var(--accent); }
+  .chip.surprise { background:linear-gradient(90deg,var(--accent),var(--accent2)); border:0; font-weight:600; }
+  .status { color:var(--muted); margin:16px 2px; font-size:.95rem; }
+  .status.error { color:#fca5a5; }
+  .card { display:flex; justify-content:space-between; gap:12px; padding:12px 14px; margin-top:8px;
+          background:var(--card); border:1px solid var(--border); border-radius:12px; }
+  .card.click { cursor:pointer; }
+  .card.click:hover { border-color:var(--accent); transform:translateY(-1px); }
+  .card.picked { border-color:var(--accent); background:linear-gradient(90deg,rgba(236,72,153,.15),rgba(139,92,246,.12)); }
+  .t { font-weight:600; }
+  .a { color:var(--muted); font-size:.9rem; margin-top:2px; }
+  .pills { margin-top:6px; display:flex; gap:6px; flex-wrap:wrap; }
+  .pill { font-size:.72rem; padding:2px 8px; border-radius:999px; background:#0b1222; color:var(--muted); border:1px solid var(--border); }
+  .match { min-width:92px; text-align:right; align-self:center; }
+  .match b { color:var(--accent); }
+  .bar { height:6px; border-radius:999px; background:#0b1222; margin-top:6px; overflow:hidden; }
+  .bar i { display:block; height:100%; background:linear-gradient(90deg,var(--accent),var(--accent2)); }
+  h2 { margin:22px 0 4px; font-size:1.05rem; }
+  .small { color:var(--muted); font-size:.8rem; margin-top:26px; line-height:1.5; }
+  @media (max-width:520px) { .steps { grid-template-columns:1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🎵 Music Recommender</h1>
+  <p class="sub">Tell us a song you like and we'll find tracks that sound similar.</p>
+
+  <div class="steps">
+    <div class="step"><b>1. Search</b>Type a song or artist name</div>
+    <div class="step"><b>2. Pick</b>Click the song you like</div>
+    <div class="step"><b>3. Discover</b>Get similar songs with match %</div>
+  </div>
+
+  <div class="searchbox">
+    <input id="q" placeholder="Search a song or artist..." autocomplete="off" autofocus>
+    <button id="clear" title="Clear">✕</button>
+  </div>
+  <div class="chips" id="chips">
+    <span class="lbl">Try:</span>
+    <button class="chip surprise" id="surprise">🎲 Surprise me</button>
+  </div>
+
+  <div id="status" class="status"></div>
+  <div id="results"></div>
+  <div id="recSection" style="display:none">
+    <div id="picked"></div>
+    <h2>Songs you may like</h2>
+    <div id="recs"></div>
+  </div>
+
+  <p class="small">How it works: each song is described by audio features (tempo, energy, valence, danceability, ...) and its
+  artist/track/genre text. Songs closest to your pick, by cosine similarity, are recommended. It is content-based, so it
+  needs no listening history.</p>
+</div>
+<script>
+const $ = id => document.getElementById(id);
+const EXAMPLES = ["Coldplay", "Ed Sheeran", "Taylor Swift", "Arijit Singh", "Believer"];
+let timer, seq = 0;
+
+async function api(path) {
+  const r = await fetch(path);
+  if (!r.ok) {
+    let msg = "Something went wrong";
+    try { msg = (await r.json()).detail || msg; } catch (e) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+function setStatus(text, isError) { $("status").textContent = text || ""; $("status").className = "status" + (isError ? " error" : ""); }
+function pill(text) { const p = document.createElement("span"); p.className = "pill"; p.textContent = text; return p; }
+
+function card(s, opts = {}) {
+  const d = document.createElement("div");
+  d.className = "card" + (opts.onclick ? " click" : "") + (opts.picked ? " picked" : "");
+  const left = document.createElement("div");
+  const t = document.createElement("div"); t.className = "t"; t.textContent = s.track;
+  const a = document.createElement("div"); a.className = "a"; a.textContent = s.artist;
+  const pills = document.createElement("div"); pills.className = "pills";
+  if (s.genre) pills.append(pill(s.genre));
+  pills.append(pill(s.tempo + " BPM"));
+  left.append(t, a, pills);
+  d.append(left);
+  if (opts.similarity !== undefined) {
+    const m = document.createElement("div"); m.className = "match";
+    const pct = Math.max(0, Math.round(opts.similarity * 100));
+    const b = document.createElement("b"); b.textContent = pct + "% match";
+    const bar = document.createElement("div"); bar.className = "bar";
+    const fill = document.createElement("i"); fill.style.width = pct + "%";
+    bar.append(fill); m.append(b, bar); d.append(m);
+  }
+  if (opts.onclick) d.onclick = opts.onclick;
+  return d;
+}
+
+function resetResults() { $("results").replaceChildren(); $("recSection").style.display = "none"; }
+
+async function doSearch(q) {
+  const mine = ++seq;
+  resetResults();
+  if (!q) { setStatus(""); return; }
+  setStatus("Searching...");
+  try {
+    const data = await api("/search?q=" + encodeURIComponent(q) + "&limit=10");
+    if (mine !== seq) return;
+    if (!data.length) { setStatus(`No songs found for "${q}". Try another song or artist name.`); return; }
+    setStatus("Click a song to get recommendations:");
+    $("results").replaceChildren(...data.map(s => card(s, { onclick: () => recommend(s.id) })));
+  } catch (e) { setStatus(e.message, true); }
+}
+
+async function recommend(id) {
+  seq++;
+  setStatus("Finding similar songs...");
+  $("results").replaceChildren();
+  try {
+    const d = await api("/recommend/" + id);
+    setStatus("");
+    $("picked").replaceChildren(card(d.song, { picked: true }));
+    $("recs").replaceChildren(...d.recommendations.map(s => card(s, { similarity: s.similarity, onclick: () => recommend(s.id) })));
+    $("recSection").style.display = "block";
+    $("recSection").scrollIntoView({ behavior: "smooth", block: "start" });
+  } catch (e) { setStatus(e.message, true); }
+}
+
+$("q").addEventListener("input", () => {
+  $("clear").style.display = $("q").value ? "block" : "none";
+  clearTimeout(timer);
+  timer = setTimeout(() => doSearch($("q").value.trim()), 250);
+});
+$("clear").onclick = () => { $("q").value = ""; $("clear").style.display = "none"; doSearch(""); $("q").focus(); };
+$("surprise").onclick = async () => {
+  try { setStatus("Picking a random song..."); const r = await api("/random"); recommend(r.id); }
+  catch (e) { setStatus(e.message, true); }
+};
+EXAMPLES.forEach(name => {
+  const b = document.createElement("button"); b.className = "chip"; b.textContent = name;
+  b.onclick = () => { $("q").value = name; $("q").dispatchEvent(new Event("input")); };
+  $("chips").append(b);
+});
+</script>
+</body>
+</html>
